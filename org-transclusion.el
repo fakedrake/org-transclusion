@@ -93,11 +93,17 @@ See `display-buffer' for example options."
   :risky t
   :group 'org-transclusion)
 
-(defcustom org-transclusion-mode-lighter
-  " OT"
+(defcustom org-transclusion-mode-lighter " OT"
   "Mode-line indicator for `org-transclusion-mode'."
   :type '(choice (const :tag "No lighter" "") string)
   :safe 'stringp
+  :group 'org-transclusion)
+
+(defconst org-transclusion-regex-transclude "^[ \t]*#\\+TRANSCLUDE:")
+(defconst org-transclusion-regex-include "^[ \t]*#\\+INCLUDE:")
+(defcustom org-transclusion-include-is-also-transclude t
+  "Testing.  Make it nil by default"
+  :type 'boolean
   :group 'org-transclusion)
 
 ;;;; Faces
@@ -365,7 +371,10 @@ triggers transclusion by calling `org-transclusion-add' even when
              (link (org-element-link-interpreter context contents)))
         (save-excursion
           (org-transclusion-search-or-add-next-empty-line)
-          (insert (format "#+transclude: %s\n" link))
+          (insert
+           (if org-transclusion-include-is-also-transclude
+               (format "#include: %s\n" link)
+             (format "#+transclude: %s\n" link)))
           (forward-line -1)
           (when (and (numberp arg)
                      (> arg 0)
@@ -410,7 +419,9 @@ does not support all the elements.
   (interactive)
   (if (let ((elm (org-element-at-point)))
         (not (and (string= "keyword" (org-element-type elm))
-                  (string= "TRANSCLUDE" (org-element-property :key elm)))))
+                  (or (string= "TRANSCLUDE" (org-element-property :key elm))
+                      (and org-transclusion-include-is-also-transclude
+                           (string= "INCLUDE" (org-element-property :key elm)))))))
       (user-error "Not at a transclude keyword")
     (let* ((keyword-plist (org-transclusion-keyword-string-to-plist))
            (link (org-transclusion-wrap-path-to-link
@@ -465,7 +476,9 @@ the rest of the buffer unchanged."
     (let ((marker (move-marker (make-marker) (point))))
       (unless narrowed (widen))
       (goto-char (point-min))
-      (let ((regexp "^[ \t]*#\\+TRANSCLUDE:"))
+      (let ((regexp org-transclusion-regex-transclude))
+        (when org-transclusion-include-is-also-transclude
+          (concat regexp "\\|" org-transclusion-regex-include))
         (while (re-search-forward regexp nil t)
           ;; Don't transclude if within a transclusion to avoid infinite
           ;; recursion
@@ -735,7 +748,9 @@ temporarily turned off (removed)."
   (save-excursion
     (beginning-of-line)
     (let ((plist))
-      (when (string= "TRANSCLUDE" (org-element-property :key (org-element-at-point)))
+      (when (or (string= "TRANSCLUDE" (org-element-property :key (org-element-at-point)))
+                (and org-transclusion-include-is-also-transclude
+                     (string= "INCLUDE" (org-element-property :key (org-element-at-point)))))
         ;; #+transclude: keyword exists.
         ;; Further checking the value
         (when-let ((str (org-element-property :value (org-element-at-point))))
@@ -825,7 +840,9 @@ keyword.  If not, returns nil."
             (when-let ((str (funcall fn plist)))
               (setq custom-properties-string
                     (concat custom-properties-string " " str )))))
-    (concat "#+transclude: "
+    (concat (if org-transclusion-include-is-also-transclude
+                "#+include: "
+              "#+transclude: ")
             link
             (when level (format " :level %d" level))
             (when disable-auto (format " :disable-auto"))
