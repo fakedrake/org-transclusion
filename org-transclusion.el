@@ -928,7 +928,9 @@ based on the following arguments:
          (end-mkr)
          (ov-src (text-clone-make-overlay sbeg send sbuf)) ;; source-buffer overlay
          (tc-pair ov-src)
-         (content content))
+         (content content)
+	 (line-prefix-val (get-text-property beg 'line-prefix))
+	 (wrap-prefix-val (get-text-property beg 'wrap-prefix)))
     (when (org-transclusion-type-is-org type)
         (with-temp-buffer
           ;; This temp buffer needs to be in Org Mode
@@ -973,9 +975,9 @@ based on the following arguments:
                                      ,keyword-values
                                      ;; TODO Fringe is not supported for terminal
                                      line-prefix
-                                     ,(org-transclusion-propertize-transclusion)
+                                     ,(org-transclusion-propertize-transclusion line-prefix-val)
                                      wrap-prefix
-                                     ,(org-transclusion-propertize-transclusion)))
+                                     ,(org-transclusion-propertize-transclusion wrap-prefix-val)))
     ;; Put to the source overlay
     (overlay-put ov-src 'org-transclusion-by beg-mkr)
     (overlay-put ov-src 'evaporate t)
@@ -1279,15 +1281,17 @@ string \"nil\", return symbol t."
              (get-char-property (point) 'text-clones))
     t))
 
-(defun org-transclusion-propertize-transclusion ()
+(defun org-transclusion-propertize-transclusion (val)
   "."
   (if (not (display-graphic-p))
-      (propertize "| " 'face 'org-transclusion)
-    (propertize
-     "x"
-     'display
-     '(left-fringe org-transclusion-fringe-bitmap
-                   org-transclusion-fringe))))
+      (concat val
+	      (propertize "| " 'face 'org-transclusion))
+    (concat val
+	    (propertize
+	     "x"
+	     'display
+	     '(left-fringe org-transclusion-fringe-bitmap
+			   org-transclusion-fringe)))))
 
 (defun org-transclusion-propertize-source ()
   "."
