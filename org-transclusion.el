@@ -496,6 +496,8 @@ When success, return the beginning point of the keyword re-inserted."
             (keyword-plist (get-char-property (point)
                                               'org-transclusion-orig-keyword))
             (indent (plist-get keyword-plist :current-indentation))
+	    (line-prefix-val (get-text-property beg 'line-prefix))
+	    (wrap-prefix-val (get-text-property beg 'wrap-prefix))
             (keyword (org-transclusion-keyword-plist-to-string keyword-plist))
             (tc-pair-ov (get-char-property (point) 'org-transclusion-pair)))
       (progn
@@ -518,7 +520,8 @@ When success, return the beginning point of the keyword re-inserted."
             (save-excursion
               (delete-region beg end)
               (when (> indent 0) (indent-to indent))
-              (insert-before-markers keyword))
+              (insert-before-markers keyword)
+	      (when org-indent-mode (org-indent-add-properties beg end)))
             ;; Move markers of adjacent transclusions if any to their original
             ;; potisions.  Some markers move if two transclusions are placed
             ;; without any blank lines, and either of beg and end markers will
