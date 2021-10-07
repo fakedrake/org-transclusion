@@ -461,6 +461,7 @@ does not support all the elements.
                      src-buf src-beg src-end)
                     (unless (eobp) (delete-char 1))
                     (setq end (point))
+                    (sit-for 0) ; redisplay
                     t)
               ;; `org-transclusion-keyword-remove' checks element at point is a
               ;; keyword or not
@@ -500,57 +501,95 @@ the rest of the buffer unchanged."
       (move-marker marker nil) ; point nowhere for GC
       t)))
 
+(cl-defstruct org-transclusion-text-props
+  "The separate text properti2es."
+  beg end orig-key type tc-pair)
+
+(defun org-transclusion--get-props (&optional pt)
+  (save-excursion
+    (when pt (goto-char pt))
+    (if-let ((beg (get-char-property (point) 'org-transclusion-beg-mkr))
+             (end (get-char-property (point) 'org-transclusion-end-mkr))
+             (type (get-char-property (point) 'org-transclusion-type))
+             (pair (get-char-property (point) 'org-transclusion-pair))
+             (key (get-char-property (point) 'org-transclusion-orig-keyword)))
+        (make-org-transclusion-text-props
+         :beg beg
+         :end end
+         :orig-key key
+         :type type
+         :tc-pair pair)
+      nil)))
+
+(defun org-transclusion--set-props (beg end props)
+  "Setup the text properties of region."
+  (when props
+    (add-text-properties
+     beg end
+     `(local-map
+       ,org-transclusion-map
+       read-only t
+       front-sticky t
+       ;; rear-nonticky seems better for
+       ;; src-lines to add "#+result" after C-c
+       ;; C-c
+       rear-nonsticky t
+       org-transclusion-type ,(org-transclusion-text-props-type props)
+       org-transclusion-beg-mkr ,(org-transclusion-text-props-beg props)
+       org-transclusion-end-mkr ,(org-transclusion-text-props-end props)
+       org-transclusion-pair ,(org-transclusion-text-props-tc-pair props)
+       org-transclusion-orig-keyword ,(org-transclusion-text-props-orig-key props)
+       ;; TODO Fringe is not supported for terminal
+       line-prefix ,(org-transclusion-propertize-transclusion)
+       wrap-prefix ,(org-transclusion-propertize-transclusion)))))
+
+(defun org-transclusion--tp-stacked (p1 p2)
+  "Is p1 entirely within p2?"
+  (cond
+   ((null p2) t)
+   ((and (> (org-transclusion-text-props-beg p1) (org-transclusion-text-props-beg p2))
+         (< (org-transclusion-text-props-end p1) (org-transclusion-text-props-end p2)))
+    t)
+   (t nil)))
+
+(defun org-transclusion--prev-level (&optional pt)
+  "Get the props of one level up or nil if the prev level is the
+top one."
+  (save-excursion
+    (if-let ((cur-props (org-transclusion--get-props pt)))
+        (cl-loop
+         for match = (text-property-search-backward 'org-transclusion-end-mkr nil nil t)
+         until (null match)
+         for prev-props = (org-transclusion--get-props (prop-match-beginning match))
+         when (org-transclusion--tp-stacked cur-props prev-props) return prev-props))))
+
+(defun org-transclusion--delete-text (props)
+  (delete-region (org-transclusion-text-props-beg props)
+                 (org-transclusion-text-props-end props)))
+
 (defun org-transclusion-remove ()
-  "Remove transcluded text at point.
-When success, return the beginning point of the keyword re-inserted."
   (interactive)
-  (if-let* ((beg (marker-position (get-char-property (point)
-                                                     'org-transclusion-beg-mkr)))
-            (end (marker-position (get-char-property (point)
-                                                     'org-transclusion-end-mkr)))
-            (keyword-plist (get-char-property (point)
-                                              'org-transclusion-orig-keyword))
-            (indent (plist-get keyword-plist :current-indentation))
-            (keyword (org-transclusion-keyword-plist-to-string keyword-plist))
-            (tc-pair-ov (get-char-property (point) 'org-transclusion-pair)))
-      (progn
-        ;; Need to retain the markers of the other adjacent transclusions
-        ;; if any.  If their positions differ after insert, move them back
-        ;; beg or end
-        (let* ((prev-end (get-text-property (1- beg) 'org-transclusion-end-mkr))
-               (is-nested (and prev-end (> prev-end beg)))
-               (mkr-at-beg
-               ;; Check the points to look at exist in buffer.  Then look for
-               ;; adjacent transclusions' markers if any.
-                (when (and (>= (1- beg) (point-min)) (not is-nested))
-                  prev-end)))
-          ;; If within live-sync, exit.  It's not absolutely
-          ;; required. delete-region below will evaporate the live-sync
-          ;; overlay, and text-clone's post-command correctly handles the
-          ;; overlay on the source.
-          (when (org-transclusion-within-live-sync-p)
-            (org-transclusion-live-sync-exit))
-          (delete-overlay tc-pair-ov)
+  (let ((prev (org-transclusion--prev-level))
+        (cur (org-transclusion--get-props)))
+    (if cur
+        (let* ((keyword-plist (org-transclusion-text-props-orig-key cur))
+               (keyword-string (org-transclusion-keyword-plist-to-string keyword-plist))
+               (indent (plist-get keyword-plist :current-indentation)))
           (org-transclusion-with-silent-modifications
-            (save-excursion
-              (delete-region beg end)
+            (org-transclusion--delete-text cur)
+            (let ((beg (point)))
               (when (> indent 0) (indent-to indent))
-              (if is-nested
-                  (insert-before-markers-and-inherit keyword)
-                (insert-before-markers keyword)))
-            ;; Move markers of adjacent transclusions if any to their original
-            ;; potisions.  Some markers move if two transclusions are placed
-            ;; without any blank lines, and either of beg and end markers will
-            ;; inevitably have the same position (location "between" lines)
-            (when mkr-at-beg (move-marker mkr-at-beg beg))
-            ;; Go back to the beginning of the inserted keyword line
-            (goto-char beg)
-            (when (and (featurep 'org-indent) org-indent-mode
-                       (memq 'org-transclusion-indent-mode
-                             org-transclusion-extensions))
-              (org-translusion-indent-add-properties beg (line-end-position))))
-          beg))
-    (message "Nothing done. No transclusion exists here.") nil))
+              (insert-before-markers keyword-string)
+              (org-transclusion--set-props beg (point) prev)
+              ;; Go back to the beginning of the inserted keyword line
+              (when (and (featurep 'org-indent) org-indent-mode
+                         (memq 'org-transclusion-indent-mode
+                               org-transclusion-extensions))
+                (org-translusion-indent-add-properties beg (line-end-position)))
+              (goto-char beg)
+              (sit-for 0)
+              beg)))
+      (error "No transclusion here."))))
 
 (defun org-transclusion-remove-all (&optional narrowed)
   "Remove all transcluded text regions in the current buffer.
@@ -1183,18 +1222,43 @@ etc.)."
     (delay-mode-hooks (org-mode))
     (insert str)
     (beginning-of-buffer)
-    (unless (org-at-heading-p) (outline-next-heading))
-    (unless (>= (point) (point-max))
+    (while (and (< (point) (point-max)) (or (org-at-heading-p) (outline-next-heading)))
       (dotimes (i (or times 1))
-        (org-demote-subtree)))
+        (org-demote-subtree))
+      (forward-line)
+      (beginning-of-line))
     (buffer-string)))
+
+
+(defun safe>= (a b)
+  "> but null means infinite and (safe> nil nil) => t."
+  (cond
+   ((null a) t)
+   ((null b) nil)
+   (t (>= a b))))
+
+;; XXX: the insert mark level should not go to neighboring
+;; transclusions. Look for headings for which the end is further than
+;; our end.
+(defun org-transclusion-outline-level (end)
+  (org-with-wide-buffer
+   (end-of-line)
+   (if (re-search-backward org-outline-regexp-bol nil t)
+       (if (safe>= (get-text-property (point) 'org-transclusion-end-mkr) end)
+           (1- (- (match-end 0) (match-beginning 0)))
+         (beginning-of-line)
+         (if (= (point) (point-min))
+             0
+           (forward-line -1)
+           (org-transclusion-outline-level end)))
+     0)))
 
 (defun org-transclusion--insert-mark-level ()
   (save-excursion
     (with-current-buffer (marker-buffer *org-transclusion-pre-insert-marker*)
       (goto-char *org-transclusion-pre-insert-marker*)
-      (or (org-current-level) 0))))
-
+      (org-transclusion-outline-level
+       (get-text-property (point) 'org-transclusion-end-mkr)))))
 
 (defun org-transclusion--interpret-data (tree)
   "Convert the title to a heading."
