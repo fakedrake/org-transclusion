@@ -431,6 +431,7 @@ does not support all the elements.
     (unless org-transclusion-mode
       (let ((org-transclusion-add-all-on-activate nil))
         (org-transclusion-mode +1)))
+    (setq *org-transclusion-pre-insert-marker* (point-marker))
     (let* ((keyword-plist (org-transclusion-keyword-string-to-plist))
            (link (org-transclusion-wrap-path-to-link
                   (plist-get keyword-plist :link)))
@@ -926,6 +927,8 @@ Return nil if not found."
 ;;-----------------------------------------------------------------------------
 ;;;; Functions for inserting content
 
+(defvar *org-transclusion-pre-insert-marker* nil
+  "A marker to the place where data is inserted.")
 (defun org-transclusion-content-insert (keyword-values type content sbuf sbeg send)
   "Insert CONTENT at point and put source overlay in SBUF.
 Return t when successful.
@@ -1170,10 +1173,45 @@ etc.)."
           (setq obj (org-element-map obj org-element-all-elements
                       #'org-transclusion-content-filter-org-only-contents
                       nil nil '(section) nil)))
-        (list :src-content (org-element-interpret-data obj)
+        (list :src-content (org-transclusion--interpret-data obj)
               :src-buf (current-buffer)
               :src-beg (point-min)
               :src-end (point-max))))))
+
+(defun org-demote-string (str &optional times)
+  (with-temp-buffer
+    (delay-mode-hooks (org-mode))
+    (insert str)
+    (beginning-of-buffer)
+    (unless (org-at-heading-p) (outline-next-heading))
+    (unless (>= (point) (point-max))
+      (dotimes (i (or times 1))
+        (org-demote-subtree)))
+    (buffer-string)))
+
+(defun org-transclusion--insert-mark-level ()
+  (save-excursion
+    (with-current-buffer (marker-buffer *org-transclusion-pre-insert-marker*)
+      (goto-char *org-transclusion-pre-insert-marker*)
+      (or (org-current-level) 0))))
+
+
+(defun org-transclusion--interpret-data (tree)
+  "Convert the title to a heading."
+  (let* ((obj (car tree))
+         (maybe-title-elem (car (org-element-contents obj))))
+    (if (and (eq (org-element-type maybe-title-elem) 'keyword)
+             (string= (org-element-property :key maybe-title-elem) "TITLE"))
+        (let ((title-str (org-element-property :value maybe-title-elem))
+              (level (1+ (org-transclusion--insert-mark-level))))
+          (org-element-extract-element maybe-title-elem)
+          (org-element-headline-interpreter
+           `(headline (:title ,title-str :level ,level))
+           (concat
+            (org-demote-string (org-element-interpret-data tree) level)
+            "\n\n")))
+      (org-element-interpret-data tree))))
+
 
 (defun org-transclusion-content-filter-org-exclude-elements (data)
   "Exclude specific elements from DATA.
