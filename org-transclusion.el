@@ -471,6 +471,10 @@ does not support all the elements.
             (org-translusion-indent-add-properties beg end)))
         t))))
 
+(defcustom org-transclusion-enable-recursive-add nil
+  "When calling `org-transclusion-add-all' recursively add the
+transclusions without caring about the nested stuff.")
+
 ;;;###autoload
 (defun org-transclusion-add-all (&optional narrowed)
   "Add all active transclusions in the current buffer.
@@ -493,7 +497,8 @@ the rest of the buffer unchanged."
         (while (re-search-forward regexp nil t)
           ;; Don't transclude if within a transclusion to avoid infinite
           ;; recursion
-          (unless (or (org-transclusion-within-transclusion-p)
+          (unless (or (and (not org-transclusion-enable-recursive-add)
+                           (org-transclusion-within-transclusion-p))
                       (plist-get (org-transclusion-keyword-string-to-plist)
                                  :disable-auto))
             (org-transclusion-add))))
@@ -586,6 +591,7 @@ top one."
                          (memq 'org-transclusion-indent-mode
                                org-transclusion-extensions))
                 (org-translusion-indent-add-properties beg (line-end-position)))
+              (delete-char 2) ; Delete separator.
               (goto-char beg)
               (sit-for 0)
               beg)))
@@ -1023,6 +1029,7 @@ based on the following arguments:
       'org-transclusion-content-format-functions type content))
     (setq end (point))
     (setq end-mkr (set-marker (make-marker) end))
+    (insert "\n\n") ; Separator
     (add-text-properties beg end
                          `(local-map ,org-transclusion-map
                                      read-only t
@@ -1271,9 +1278,7 @@ etc.)."
           (org-element-extract-element maybe-title-elem)
           (org-element-headline-interpreter
            `(headline (:title ,title-str :level ,level))
-           (concat
-            (org-demote-string (org-element-interpret-data tree) level)
-            "\n\n")))
+           (org-demote-string (org-element-interpret-data tree) level)))
       (org-element-interpret-data tree))))
 
 
