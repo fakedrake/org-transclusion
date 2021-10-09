@@ -1052,6 +1052,14 @@ based on the following arguments:
                                      ,(org-transclusion-propertize-transclusion)
                                      wrap-prefix
                                      ,(org-transclusion-propertize-transclusion)))
+    (add-text-properties end (+ 2 end)
+                         `(local-map ,org-transclusion-map
+                                     read-only t
+                                     front-sticky t
+                                     ;; rear-nonticky seems better for
+                                     ;; src-lines to add "#+result" after C-c
+                                     ;; C-c
+                                     rear-nonsticky t))
     ;; Put to the source overlay
     (overlay-put ov-src 'org-transclusion-by beg-mkr)
     (overlay-put ov-src 'evaporate t)
