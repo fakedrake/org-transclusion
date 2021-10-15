@@ -91,6 +91,13 @@ Refer to variable `org-element-all-elements' for names of elements accepted."
   :type '(repeat symbol)
   :group 'org-transclusion)
 
+(defcustom org-transclusion-modify-elements '()
+  "Define the Org elements that are to be modified in transcluded copies.
+It is an alist of elements and the function to be applied to each
+Refer to variable `org-element-all-elements' for names of elements accepted."
+  :type '(alist :key-type symbol :value-type function)
+  :group 'org-transclusion)
+
 (defcustom org-transclusion-include-first-section nil
   "Define whether or not transclusion for Org files includes \"first section\".
 If t, the section before the first headline is
@@ -1217,6 +1224,10 @@ etc.)."
           (setq obj (org-element-map obj org-element-all-elements
                       #'org-transclusion-content-filter-org-exclude-elements
                       nil nil org-element-all-elements nil)))
+
+        (setq obj (org-element-map obj org-element-all-elements
+                    #'org-transclusion-content-filter-org-modify-elements
+                    nil nil org-element-all-elements nil))
         ;; First section
         (unless only-element ;only-element is nil when it is a first section
           (setq obj (org-element-map obj org-element-all-elements
@@ -1284,11 +1295,33 @@ etc.)."
         (let ((title-str (org-element-property :value maybe-title-elem))
               (level (1+ (org-transclusion--insert-mark-level))))
           (org-element-extract-element maybe-title-elem)
-          (org-element-headline-interpreter
-           `(headline (:title ,title-str :level ,level))
-           (org-demote-string (org-element-interpret-data tree) level)))
+           (org-element-headline-interpreter
+            `(headline (:title ,title-str :level ,level))
+            (concat
+             ;; Use the ID of the node
+             (if-let ((id (org-property-values "ID")))
+                 (org-element-property-drawer-interpreter
+                'ignored
+                (concat
+                 (org-element-node-property-interpreter
+                  `(node-property (:key "CUSTOM_ID" :value ,(car id)))
+                  'ignored)
+                 "\n"))
+               "\n")
+             "\n\n"
+             (org-demote-string (org-element-interpret-data tree) level))))
       (org-element-interpret-data tree))))
 
+
+(defun org-transclusion-content-filter-org-modify-elements (data)
+  "Exclude specific elements from DATA.
+The elements to be excluded are defined by customizing variable
+`org-transclusion-exclude-elements' globally, and adjusted by
+:exclude-elements property of the transclusion keyword."
+  (dolist (el org-transclusion-modify-elements)
+    (org-element-map data (list (car el))
+      (lambda (d) (funcall (cdr el) d))))
+  data)
 
 (defun org-transclusion-content-filter-org-exclude-elements (data)
   "Exclude specific elements from DATA.
