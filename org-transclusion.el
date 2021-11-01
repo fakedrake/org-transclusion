@@ -1286,15 +1286,35 @@ etc.)."
       (org-transclusion-outline-level
        (get-text-property (point) 'org-transclusion-end-mkr)))))
 
+(defun org-transclusion--heading-titles (objs)
+  "Return ((keyword-str . title-content-str) ...). This also
+extracts the elements."
+  (mapcar
+   (lambda (title-elem)
+     (org-element-extract-element title-elem)
+     (cons (org-element-property :key title-elem)
+           (org-element-property :value title-elem)))
+   (cl-remove-if-not
+    (lambda (maybe-title-elem)
+      (and (eq (org-element-type maybe-title-elem) 'keyword)
+           (or
+            (string= (org-element-property :key maybe-title-elem) "TITLE")
+            (string= (org-element-property :key maybe-title-elem) "EXPORT_TITLE"))))
+    objs)))
+
+(defun org-transclusion--heading-title (objs)
+  "Run `org-transclusion--heading-titles', select the right title
+and return the string or nil"
+  (let ((titles (org-transclusion--heading-titles objs)))
+    (or (cdr (assoc-string "EXPORT_TITLE" titles))
+        (cdr (assoc-string "TITLE" titles)))))
+
 (defun org-transclusion--interpret-data (tree)
   "Convert the title to a heading."
   (let* ((obj (car tree))
          (maybe-title-elem (car (org-element-contents obj))))
-    (if (and (eq (org-element-type maybe-title-elem) 'keyword)
-             (string= (org-element-property :key maybe-title-elem) "TITLE"))
-        (let ((title-str (org-element-property :value maybe-title-elem))
-              (level (1+ (org-transclusion--insert-mark-level))))
-          (org-element-extract-element maybe-title-elem)
+    (if-let ((title-str (org-transclusion--heading-title (org-element-contents obj))))
+        (let ((level (1+ (org-transclusion--insert-mark-level))))
            (org-element-headline-interpreter
             `(headline (:title ,title-str :level ,level))
             (concat
